@@ -116,16 +116,13 @@ function M.render()
   local highlights = {}
   local methods_with_body = { POST = true, PUT = true, PATCH = true, DELETE = true }
 
-  -- Help text in winbar (pinned, never scrolls, right-aligned)
+  -- Empty winbar (keeps one row of spacing at the top)
   if popup.winid and vim.api.nvim_win_is_valid(popup.winid) then
-    local help = "a:header  dd:del  c:curl  C-s:save  C-o:load"
-    if methods_with_body[M.state.method] then
-      help = help .. "  b:body"
-    end
-    help = help .. "  <CR>:send "
-    local winbar = "%#RestischWinbarFill#%=%#RestischWinbar#" .. help
-    vim.wo[popup.winid].winbar = winbar
+    vim.wo[popup.winid].winbar = "%#RestischWinbarFill# "
   end
+
+  -- Push help text to response panel statusline
+  M.update_help_statusline(methods_with_body)
 
   -- Separator below winbar (full width, in panel border color)
   local sep_width = 80
@@ -260,6 +257,10 @@ function M.setup_keymaps()
 
   -- Method selector
   popup:map("n", "m", function()
+    local url_line = M.state.url_line or 1
+    if popup.winid and vim.api.nvim_win_is_valid(popup.winid) then
+      vim.api.nvim_win_set_cursor(popup.winid, { url_line + 1, 0 })
+    end
     M.show_method_menu()
   end, opts)
 
@@ -369,6 +370,10 @@ function M.edit_url_inline()
   local method_prefix = string.format(" [%s] ", M.state.method)
   local url_line_idx = M.state.url_line or 1
 
+  -- Set pink blinking cursor for URL edit mode
+  local saved_guicursor = vim.o.guicursor
+  vim.o.guicursor = "i:ver25-RestischCursorUrl-blinkwait300-blinkon200-blinkoff150"
+
   -- Make buffer modifiable
   vim.bo[popup.bufnr].modifiable = true
 
@@ -376,12 +381,9 @@ function M.edit_url_inline()
   local edit_text = method_prefix .. M.state.url
   vim.api.nvim_buf_set_lines(popup.bufnr, url_line_idx, url_line_idx + 1, false, { edit_text })
 
-  -- Position cursor at end of method prefix (start of URL area)
-  local cursor_col = #method_prefix
-  vim.api.nvim_win_set_cursor(popup.winid, { url_line_idx + 1, cursor_col })
-
-  -- Enter insert mode
-  vim.cmd("startinsert")
+  -- Position cursor at end of URL line and enter insert mode (append)
+  vim.api.nvim_win_set_cursor(popup.winid, { url_line_idx + 1, #edit_text })
+  vim.cmd("startinsert!")
 
   local augroup = vim.api.nvim_create_augroup("RestischInlineUrl", { clear = true })
 
@@ -399,6 +401,9 @@ function M.edit_url_inline()
     -- Trim whitespace
     new_url = new_url:match("^%s*(.-)%s*$") or ""
     M.state.url = new_url
+
+    -- Restore cursor style
+    vim.o.guicursor = saved_guicursor
 
     -- Cleanup
     pcall(vim.api.nvim_del_augroup_by_id, augroup)
@@ -445,8 +450,36 @@ function M.edit_url_inline()
         return
       end
 
-      -- Prevent editing the method prefix
+      -- Prevent cursor from entering the method prefix
       if col < #method_prefix then
+        vim.api.nvim_win_set_cursor(popup.winid, { url_line_idx + 1, #method_prefix })
+      end
+    end,
+  })
+
+  -- Restore method prefix if backspace damages it
+  vim.api.nvim_create_autocmd("TextChangedI", {
+    group = augroup,
+    buffer = popup.bufnr,
+    callback = function()
+      local line = vim.api.nvim_buf_get_lines(popup.bufnr, url_line_idx, url_line_idx + 1, false)[1] or ""
+      if line:sub(1, #method_prefix) ~= method_prefix then
+        -- Extract whatever URL text remains after any partial prefix
+        local url_part = ""
+        if #line > #method_prefix then
+          url_part = line:sub(#method_prefix + 1)
+        elseif #line > 0 then
+          -- Prefix was partially deleted; try to salvage URL text
+          -- Find where the prefix diverges and keep everything after
+          for i = 1, #method_prefix do
+            if line:sub(i, i) ~= method_prefix:sub(i, i) then
+              url_part = line:sub(i)
+              break
+            end
+          end
+        end
+        local restored = method_prefix .. url_part
+        vim.api.nvim_buf_set_lines(popup.bufnr, url_line_idx, url_line_idx + 1, false, { restored })
         vim.api.nvim_win_set_cursor(popup.winid, { url_line_idx + 1, #method_prefix })
       end
     end,
@@ -869,6 +902,30 @@ function M.build_curl_string()
   table.insert(parts, "'" .. url .. "'")
 
   return table.concat(parts, " \\\n  ")
+end
+
+-- Update help text in the response panel's bottom border
+function M.update_help_statusline(methods_with_body)
+  local response_ui = require("restisch.ui.response")
+  local resp_popup = response_ui.state and response_ui.state.popup
+  if not resp_popup or not resp_popup.border then
+    return
+  end
+
+  if not methods_with_body then
+    methods_with_body = { POST = true, PUT = true, PATCH = true, DELETE = true }
+  end
+
+  local help = "u:url  a:header  dd:del  c:curl  C-s:save  C-o:load"
+  if methods_with_body[M.state.method] then
+    help = help .. "  b:body"
+  end
+  help = help .. "  <CR>:send"
+
+  pcall(function()
+    local NuiText = require("nui.text")
+    resp_popup.border:set_text("bottom", NuiText(" " .. help .. " ", "RestischHelpBar"), "center")
+  end)
 end
 
 -- Send the request

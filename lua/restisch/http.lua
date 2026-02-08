@@ -5,7 +5,7 @@ local M = {}
 function M.build_command(opts)
   local cmd = {
     "curl",
-    "-s",                           -- Silent mode
+    "-sS",                          -- Silent mode but show errors
     "-i",                           -- Include response headers
     "-w", "\n---RESTISCH_META---\n%{http_code}\n%{time_total}\n%{size_download}",
   }
@@ -114,6 +114,34 @@ function M.get_status_text(status)
   return texts[status] or ""
 end
 
+-- Get human-readable curl error from exit code
+function M.get_curl_error(code)
+  local errors = {
+    [1] = "Unsupported protocol",
+    [2] = "Failed to initialize",
+    [3] = "Malformed URL",
+    [5] = "Could not resolve proxy",
+    [6] = "Could not resolve host",
+    [7] = "Failed to connect to host",
+    [22] = "HTTP error returned",
+    [23] = "Write error",
+    [26] = "Read error",
+    [27] = "Out of memory",
+    [28] = "Operation timed out",
+    [35] = "SSL connect error",
+    [47] = "Too many redirects",
+    [51] = "SSL certificate verification failed",
+    [52] = "Empty reply from server",
+    [55] = "Failed sending network data",
+    [56] = "Failure receiving network data",
+    [60] = "SSL certificate problem (unable to get local issuer certificate)",
+    [67] = "Login denied",
+    [77] = "Could not load CA certificates",
+    [78] = "Remote file not found",
+  }
+  return errors[code] or ("curl error (exit code " .. code .. ")")
+end
+
 -- Execute HTTP request asynchronously
 function M.request(opts, callback)
   if not opts.url or opts.url == "" or opts.url == "https://" then
@@ -146,9 +174,9 @@ function M.request(opts, callback)
     on_exit = function(_, exit_code)
       vim.schedule(function()
         if exit_code ~= 0 then
-          local err = table.concat(stderr_data, "\n")
+          local err = vim.trim(table.concat(stderr_data, "\n"))
           if err == "" then
-            err = "curl exited with code " .. exit_code
+            err = M.get_curl_error(exit_code)
           end
           callback({ error = err })
         else

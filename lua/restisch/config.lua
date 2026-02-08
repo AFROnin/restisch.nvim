@@ -49,6 +49,8 @@ function M.setup_highlights()
 	hl(0, "RestischTitle", { fg = "#bd93f9", bold = true })
 	hl(0, "RestischLabel", { fg = "#8be9fd" })
 	hl(0, "RestischPrompt", { fg = "#50fa7b" })
+	hl(0, "RestischCursorUrl", { bg = "#ff79c6" })
+	hl(0, "RestischHelpBar", { fg = "#8be9fd", bg = "#383a59" })
 	hl(0, "RestischWinbar", { fg = "#6272a4", bg = "#282a36" })
 	hl(0, "RestischWinbarFill", { bg = "#282a36" })
 
