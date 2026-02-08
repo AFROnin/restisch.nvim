@@ -5,6 +5,8 @@ A very simple form-based REST client for Neovim. Unlike file-based approaches (l
 ![Neovim](https://img.shields.io/badge/Neovim-%23%3E%3D0.8-green?logo=neovim&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
+<img height="700" alt="Screenshot 2026-02-07" src="https://github.com/user-attachments/assets/384cd09e-7350-4e26-ae0c-3ca4963ae6b0" />
+
 ## Features
 
 - Interactive split-panel UI (request on top, response below)
