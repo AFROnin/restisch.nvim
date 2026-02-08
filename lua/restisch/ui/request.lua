@@ -15,6 +15,7 @@ M.state = {
   body = "",
   popup = nil,
   on_send = nil,
+  editing_url = false,
 }
 
 -- Common HTTP headers for autocomplete
@@ -143,6 +144,7 @@ function M.render()
   local method_line = string.format(" [%s] ", M.state.method)
   local url_display = M.state.url ~= "" and M.state.url or "(press 'u' to set URL)"
   table.insert(lines, method_line .. url_display)
+  M.state.url_line = #lines - 1
   local method_hl = "RestischMethod" .. M.state.method
   table.insert(highlights, {
     line = #lines - 1,
@@ -261,9 +263,9 @@ function M.setup_keymaps()
     M.show_method_menu()
   end, opts)
 
-  -- URL input
+  -- URL input (inline editing)
   popup:map("n", "u", function()
-    M.show_url_input()
+    M.edit_url_inline()
   end, opts)
 
   -- Add header
@@ -355,36 +357,100 @@ function M.show_method_menu()
   menu:mount()
 end
 
--- Show URL input
-function M.show_url_input()
-  local input = Input({
-    position = "50%",
-    size = {
-      width = 60,
-    },
-    border = {
-      style = "rounded",
-      text = {
-        top = " URL ",
-        top_align = "center",
-      },
-    },
-    win_options = {
-      winhighlight = "Normal:RestischDialogNormal,FloatBorder:RestischDialogBorder",
-    },
-  }, {
-    prompt = "",
-    default_value = M.state.url,
-    on_submit = function(value)
-      M.state.url = value
+-- Edit URL inline in the buffer
+function M.edit_url_inline()
+  local popup = M.state.popup
+  if not popup or not popup.bufnr or not popup.winid then
+    return
+  end
+
+  M.state.editing_url = true
+
+  local method_prefix = string.format(" [%s] ", M.state.method)
+  local url_line_idx = M.state.url_line or 1
+
+  -- Make buffer modifiable
+  vim.bo[popup.bufnr].modifiable = true
+
+  -- Set the line content: method prefix + current URL (clear placeholder if empty)
+  local edit_text = method_prefix .. M.state.url
+  vim.api.nvim_buf_set_lines(popup.bufnr, url_line_idx, url_line_idx + 1, false, { edit_text })
+
+  -- Position cursor at end of method prefix (start of URL area)
+  local cursor_col = #method_prefix
+  vim.api.nvim_win_set_cursor(popup.winid, { url_line_idx + 1, cursor_col })
+
+  -- Enter insert mode
+  vim.cmd("startinsert")
+
+  local augroup = vim.api.nvim_create_augroup("RestischInlineUrl", { clear = true })
+
+  -- Helper: finish editing and extract URL
+  local function finish_editing()
+    vim.cmd("stopinsert")
+
+    -- Read the URL line and extract text after method prefix
+    local line = vim.api.nvim_buf_get_lines(popup.bufnr, url_line_idx, url_line_idx + 1, false)[1] or ""
+    local new_url = ""
+    if #line > #method_prefix then
+      new_url = line:sub(#method_prefix + 1)
+    end
+
+    -- Trim whitespace
+    new_url = new_url:match("^%s*(.-)%s*$") or ""
+    M.state.url = new_url
+
+    -- Cleanup
+    pcall(vim.api.nvim_del_augroup_by_id, augroup)
+    pcall(vim.api.nvim_buf_del_keymap, popup.bufnr, "i", "<CR>")
+
+    -- Defer clearing editing_url so Esc guard in main.lua still catches InsertLeave -> Esc
+    vim.schedule(function()
+      M.state.editing_url = false
       M.render()
+    end)
+  end
+
+  -- Accept with <CR> in insert mode
+  vim.api.nvim_buf_set_keymap(popup.bufnr, "i", "<CR>", "", {
+    noremap = true,
+    nowait = true,
+    callback = function()
+      finish_editing()
     end,
   })
 
-  input:mount()
-  input:map("n", "<Esc>", function()
-    input:unmount()
-  end, { noremap = true })
+  -- Auto-finish on InsertLeave (covers <Esc> in insert mode)
+  vim.api.nvim_create_autocmd("InsertLeave", {
+    group = augroup,
+    buffer = popup.bufnr,
+    once = true,
+    callback = function()
+      finish_editing()
+    end,
+  })
+
+  -- Constrain cursor to URL line and protect method prefix
+  vim.api.nvim_create_autocmd("CursorMovedI", {
+    group = augroup,
+    buffer = popup.bufnr,
+    callback = function()
+      local cursor = vim.api.nvim_win_get_cursor(popup.winid)
+      local row = cursor[1]
+      local col = cursor[2]
+
+      -- Keep cursor on the URL line
+      if row ~= url_line_idx + 1 then
+        vim.api.nvim_win_set_cursor(popup.winid, { url_line_idx + 1, math.max(col, #method_prefix) })
+        return
+      end
+
+      -- Prevent editing the method prefix
+      if col < #method_prefix then
+        vim.api.nvim_win_set_cursor(popup.winid, { url_line_idx + 1, #method_prefix })
+      end
+    end,
+  })
 end
 
 -- Show add header dialog
@@ -843,6 +909,7 @@ function M.reset()
   M.state.url = ""
   M.state.headers = vim.deepcopy(config.default_headers or {})
   M.state.body = ""
+  M.state.editing_url = false
 end
 
 return M

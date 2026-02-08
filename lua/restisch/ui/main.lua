@@ -109,6 +109,9 @@ function M.setup_global_keymaps(popup)
   end, opts)
 
   popup:map("n", "<Esc>", function()
+    if request_ui.state.editing_url then
+      return
+    end
     M.close()
   end, opts)
 
